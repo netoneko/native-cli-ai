@@ -1,0 +1,6 @@
+---
+source: crates/tui/tests/transcript_rendering.rs
+assertion_line: 88
+expression: plain
+---
+The file defines the main function and a helper, then exits.

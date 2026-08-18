@@ -1,0 +1,9 @@
+---
+source: crates/tui/tests/transcript_rendering.rs
+assertion_line: 78
+expression: plain
+---
+Model | Context
+----|----
+glm-4.7 | 128K
+glm-5.2 | 1M

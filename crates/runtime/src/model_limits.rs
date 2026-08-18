@@ -108,6 +108,19 @@ pub const MODEL_CONTEXT_LIMITS: &[ModelContextLimits] = &[
         context_window: 32_000,
         max_output_tokens: 8192,
     },
+    // GLM-5.x (z.ai) — must be listed before the plain "glm-4" would ever be
+    // added, and matches "glm-5.2"/"glm-5.3"/etc. via substring "glm-5".
+    ModelContextLimits {
+        pattern: "glm-5",
+        context_window: 1_000_000,
+        max_output_tokens: 128_000,
+    },
+    // GLM-4.7 (z.ai)
+    ModelContextLimits {
+        pattern: "glm-4.7",
+        context_window: 128_000,
+        max_output_tokens: 128_000,
+    },
     // Gemini 1.5 Pro
     ModelContextLimits {
         pattern: "gemini-1.5-pro",
@@ -250,6 +263,13 @@ mod tests {
         assert_eq!(detect_context_window("minimax/minimax-m2.7"), 204_800);
         assert_eq!(detect_context_window("MiniMax-M2.5"), 100_000);
         assert_eq!(detect_context_window("minimax-m2"), 32_000);
+    }
+
+    #[test]
+    fn test_detect_glm() {
+        assert_eq!(detect_context_window("glm-4.7"), 128_000);
+        assert_eq!(detect_context_window("glm-5.2"), 1_000_000);
+        assert_eq!(detect_context_window("glm-5.3"), 1_000_000);
     }
 
     #[test]

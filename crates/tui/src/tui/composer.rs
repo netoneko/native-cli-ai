@@ -8,7 +8,9 @@
 use crate::file_mentions;
 use crate::slash_commands::{CommandCategory, visible_commands};
 use crate::tui::app::TuiCmd;
+use crate::tui::state::TuiSessionState;
 use crate::tui::theme;
+use crate::tui::transcript::wrap_text;
 use nca_core::skills::{SkillCatalog, SkillSource};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -82,6 +84,28 @@ pub fn composer_chrome_height(
         0
     };
     slash_h.max(at_h)
+}
+
+/// Total height (borders + content) the input box needs: enough rows for the
+/// word-wrapped input line, plus the staged-image note and/or status hint
+/// when those are shown below it. Without this, a long line wraps visually
+/// (ratatui's own `Wrap`) but the extra rows have no space reserved and get
+/// clipped by the fixed-height layout.
+pub fn composer_box_height(g: &TuiSessionState, width: u16) -> u16 {
+    // 2 for the box borders, 2 for the "❯ " prompt prefix on the content line.
+    let inner_w = width.saturating_sub(4).max(1) as usize;
+    let content_rows = wrap_text(&g.input_buffer, inner_w).len().max(1) as u16;
+    let hint_visible = g.active_approval.is_some()
+        || (g.active_question.is_some() && !g.question_modal_open())
+        || slash_panel_visible(&g.input_buffer)
+        || g.input_buffer.is_empty();
+    let staged_row: u16 = if g.staged_image_attachments.is_empty() {
+        0
+    } else {
+        1
+    };
+    let hint_row: u16 = if hint_visible { 1 } else { 0 };
+    2 + content_rows + staged_row + hint_row
 }
 
 /// Replace `@prefix` before cursor with `@choice` (relative path).

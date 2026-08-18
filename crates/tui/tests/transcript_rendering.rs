@@ -72,6 +72,23 @@ fn markdown_block_renders_list_items() {
 }
 
 #[test]
+fn markdown_block_renders_table_as_rows_not_one_cell_per_line() {
+    let md = "| Model | Context |\n|-------|---------|\n| glm-4.7 | 128K |\n| glm-5.2 | 1M |\n";
+    let plain = lines_to_plain(&render_markdown_block(md, 80));
+    insta::assert_snapshot!("markdown_table_block", plain);
+}
+
+#[test]
+fn markdown_block_keeps_inline_spans_on_one_line() {
+    // Regression: inline code / bold text used to flush onto their own line,
+    // fragmenting one sentence into one line per span and eating the spaces
+    // around them (e.g. "the`main`function").
+    let md = "The file defines the `main` function and **a helper**, then exits.";
+    let plain = lines_to_plain(&render_markdown_block(md, 80));
+    insta::assert_snapshot!("markdown_inline_spans_block", plain);
+}
+
+#[test]
 fn transcript_lines_full_session_snapshot() {
     let mut state = TuiSessionState::new(
         "sess-snapshot".into(),

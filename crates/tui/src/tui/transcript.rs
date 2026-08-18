@@ -667,18 +667,76 @@ pub fn render_markdown_block(text: &str, width: usize) -> Vec<Line<'static>> {
     let mut code_lang = String::new();
     let mut code_buf = String::new();
     let mut list_depth = 0usize;
+    let mut bold_depth = 0u32;
+    let mut italic_depth = 0u32;
 
-    let flush_line = |out: &mut Vec<Line<'static>>, current: &mut Line<'static>| {
+    // Table state: cells are buffered as plain text (styling within a cell is
+    // not preserved) and a row is only emitted once all its cells have closed.
+    let mut in_table_cell = false;
+    let mut table_cell_buf = String::new();
+    let mut table_row_cells: Vec<String> = Vec::new();
+    let mut table_col_count = 0usize;
+
+    // `col` tracks the visual width already used on `current` — needed so a
+    // long logical line (several Text/Code/Strong events in a row, e.g. a
+    // sentence with inline code in the middle) still wraps at `width`
+    // instead of only wrapping within a single event's own text.
+    let mut col: usize = 0;
+
+    let flush_line = |out: &mut Vec<Line<'static>>, current: &mut Line<'static>, col: &mut usize| {
         if !current.spans.is_empty() || !current.style.add_modifier.is_empty() {
             out.push(current.clone());
             *current = Line::from(Vec::<Span<'static>>::new());
         }
+        *col = 0;
     };
+
+    let text_style = |bold_depth: u32, italic_depth: u32| {
+        let mut style = Style::default().fg(theme::TEXT);
+        if bold_depth > 0 {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        if italic_depth > 0 {
+            style = style.add_modifier(Modifier::ITALIC);
+        }
+        style
+    };
+
+    // Push an atomic inline span (an inline-code token, or a single word) at
+    // the current column, wrapping first if it would overflow `width`.
+    // `leading_space` requests a single separating space before it (dropped
+    // if the span starts a fresh line).
+    let push_span = |out: &mut Vec<Line<'static>>,
+                      current: &mut Line<'static>,
+                      col: &mut usize,
+                      text: &str,
+                      style: Style,
+                      leading_space: bool| {
+        if text.is_empty() {
+            return;
+        }
+        let text_w = text.chars().count();
+        let extra = if leading_space && *col > 0 { 1 } else { 0 };
+        if *col > 0 && *col + extra + text_w > width {
+            flush_line(out, current, col);
+        } else if extra > 0 {
+            current.spans.push(Span::raw(" "));
+            *col += 1;
+        }
+        current.spans.push(Span::styled(text.to_string(), style));
+        *col += text_w;
+    };
+
+    // Carries "the previous inline event ended in whitespace" across event
+    // boundaries — an adjacent `Code`/`Text` span has no whitespace of its
+    // own, so this is the only way a separator between them survives.
+    let mut pending_space = false;
 
     for event in parser {
         match event {
             MdEvent::Start(Tag::CodeBlock(kind)) => {
-                flush_line(&mut out, &mut current);
+                flush_line(&mut out, &mut current, &mut col);
+                pending_space = false;
                 in_code = true;
                 code_buf.clear();
                 code_lang = match kind {
@@ -692,46 +750,123 @@ pub fn render_markdown_block(text: &str, width: usize) -> Vec<Line<'static>> {
                 out.extend(highlighted);
                 code_buf.clear();
             }
-            MdEvent::Code(text) => {
-                current.spans.push(Span::styled(
-                    text.to_string(),
-                    Style::default().fg(theme::TOOL),
-                ));
+            MdEvent::Code(text) if in_table_cell => {
+                table_cell_buf.push_str(&text);
             }
-            MdEvent::Start(Tag::Heading { .. }) => flush_line(&mut out, &mut current),
-            MdEvent::End(TagEnd::Heading(_)) => flush_line(&mut out, &mut current),
+            MdEvent::Code(text) => {
+                push_span(
+                    &mut out,
+                    &mut current,
+                    &mut col,
+                    &text,
+                    Style::default().fg(theme::TOOL),
+                    pending_space,
+                );
+                pending_space = false;
+            }
+            MdEvent::Start(Tag::Paragraph) => {}
+            MdEvent::End(TagEnd::Paragraph) => {
+                flush_line(&mut out, &mut current, &mut col);
+                pending_space = false;
+            }
+            MdEvent::Start(Tag::Heading { .. }) => {
+                flush_line(&mut out, &mut current, &mut col);
+                pending_space = false;
+            }
+            MdEvent::End(TagEnd::Heading(_)) => {
+                flush_line(&mut out, &mut current, &mut col);
+                pending_space = false;
+            }
             MdEvent::Start(Tag::List(_)) => list_depth += 1,
             MdEvent::End(TagEnd::List(_)) => list_depth = list_depth.saturating_sub(1),
             MdEvent::Start(Tag::Item) => {
-                flush_line(&mut out, &mut current);
+                flush_line(&mut out, &mut current, &mut col);
+                pending_space = false;
                 let pad = "  ".repeat(list_depth.saturating_sub(1));
-                current.spans.push(Span::styled(
-                    format!("{pad}- "),
-                    Style::default().fg(theme::MUTED),
-                ));
+                let prefix = format!("{pad}- ");
+                col = prefix.chars().count();
+                current
+                    .spans
+                    .push(Span::styled(prefix, Style::default().fg(theme::MUTED)));
             }
-            MdEvent::End(TagEnd::Item) => flush_line(&mut out, &mut current),
-            MdEvent::Start(Tag::Strong) => {}
-            MdEvent::End(TagEnd::Strong) => {}
-            MdEvent::Start(Tag::Emphasis) => {}
-            MdEvent::End(TagEnd::Emphasis) => {}
+            MdEvent::End(TagEnd::Item) => {
+                flush_line(&mut out, &mut current, &mut col);
+                pending_space = false;
+            }
+            MdEvent::Start(Tag::Table(aligns)) => {
+                flush_line(&mut out, &mut current, &mut col);
+                pending_space = false;
+                table_col_count = aligns.len();
+            }
+            MdEvent::End(TagEnd::Table) => {
+                table_col_count = 0;
+            }
+            MdEvent::Start(Tag::TableHead) => {
+                table_row_cells.clear();
+            }
+            MdEvent::End(TagEnd::TableHead) => {
+                let row = table_row_cells.join(" | ");
+                out.push(Line::from(Span::styled(
+                    row,
+                    Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+                )));
+                let sep = vec!["---"; table_col_count.max(table_row_cells.len())].join("-|-");
+                out.push(Line::from(Span::styled(
+                    sep,
+                    Style::default().fg(theme::MUTED),
+                )));
+                table_row_cells.clear();
+            }
+            MdEvent::Start(Tag::TableRow) => {
+                table_row_cells.clear();
+            }
+            MdEvent::End(TagEnd::TableRow) => {
+                out.push(Line::from(Span::styled(
+                    table_row_cells.join(" | "),
+                    Style::default().fg(theme::TEXT),
+                )));
+                table_row_cells.clear();
+            }
+            MdEvent::Start(Tag::TableCell) => {
+                in_table_cell = true;
+                table_cell_buf.clear();
+            }
+            MdEvent::End(TagEnd::TableCell) => {
+                in_table_cell = false;
+                table_row_cells.push(table_cell_buf.trim().to_string());
+            }
+            MdEvent::Start(Tag::Strong) => bold_depth += 1,
+            MdEvent::End(TagEnd::Strong) => bold_depth = bold_depth.saturating_sub(1),
+            MdEvent::Start(Tag::Emphasis) => italic_depth += 1,
+            MdEvent::End(TagEnd::Emphasis) => italic_depth = italic_depth.saturating_sub(1),
             MdEvent::Text(t) if in_code => code_buf.push_str(&t),
+            MdEvent::Text(t) if in_table_cell => table_cell_buf.push_str(&t),
             MdEvent::Text(t) => {
-                for wrapped in wrap_text(&t, width) {
-                    if !current.spans.is_empty() {
-                        flush_line(&mut out, &mut current);
+                let style = text_style(bold_depth, italic_depth);
+                let leading_ws = t.chars().next().is_some_and(char::is_whitespace);
+                let trailing_ws = t.chars().last().is_some_and(char::is_whitespace);
+                let words: Vec<&str> = t.split_whitespace().collect();
+                if words.is_empty() {
+                    pending_space = pending_space || leading_ws || trailing_ws;
+                } else {
+                    for (i, word) in words.iter().enumerate() {
+                        let want_space = if i == 0 { pending_space || leading_ws } else { true };
+                        push_span(&mut out, &mut current, &mut col, word, style, want_space);
                     }
-                    current
-                        .spans
-                        .push(Span::styled(wrapped, Style::default().fg(theme::TEXT)));
-                    flush_line(&mut out, &mut current);
+                    pending_space = trailing_ws;
                 }
             }
-            MdEvent::SoftBreak | MdEvent::HardBreak => flush_line(&mut out, &mut current),
+            MdEvent::SoftBreak if in_table_cell => table_cell_buf.push(' '),
+            MdEvent::HardBreak if in_table_cell => table_cell_buf.push(' '),
+            MdEvent::SoftBreak => pending_space = true,
+            MdEvent::HardBreak => {
+                flush_line(&mut out, &mut current, &mut col);
+                pending_space = false;
+            }
             _ => {}
         }
     }
-    flush_line(&mut out, &mut current);
+    flush_line(&mut out, &mut current, &mut col);
     if out.is_empty() {
         out.push(Line::from(Span::styled(
             text.to_string(),

@@ -3,7 +3,7 @@
 use crate::file_mentions;
 use crate::tui::composer::{
     PaletteRow, SLASH_PANEL_MAX_ROWS, apply_at_completion, apply_selected_at_completion,
-    at_completion_active, at_completion_matches, branch_picker_enter_command,
+    at_completion_active, at_completion_matches, branch_picker_enter_command, composer_box_height,
     composer_chrome_height, composer_line, delete_completed_at_mention, filter_palette_rows,
     filter_slash_entries, filtered_branch_indices, load_slash_entries, palette_command_for_label,
     palette_selectable_indices, slash_panel_visible,
@@ -304,7 +304,8 @@ pub fn run_blocking(
                 terminal.draw(|frame| {
                 let area = frame.area();
                 let (main_area, sidebar_opt) = layout_with_sidebar(area);
-                let (tr, st_r, slash_opt, inp_r) = layout_chunks(main_area, chrome_h);
+                let input_h = composer_box_height(&g, main_area.width);
+                let (tr, st_r, slash_opt, inp_r) = layout_chunks(main_area, chrome_h, input_h);
 
                 let transcript_h = tr.height.saturating_sub(2) as usize;
                 let inner_w = tr.width.saturating_sub(2);
@@ -873,7 +874,8 @@ pub fn run_blocking(
                             }))
                             .title(input_title),
                     )
-                    .style(Style::default().bg(theme::SURFACE));
+                    .style(Style::default().bg(theme::SURFACE))
+                    .wrap(Wrap { trim: false });
 
                 frame.render_widget(input_block, inp_r);
 
@@ -1768,7 +1770,8 @@ pub fn run_blocking(
                         &g.input_buffer,
                         g.cursor_char_idx,
                     );
-                    let (tr, _, slash_r, _) = layout_chunks(main_area, sh);
+                    let input_h = composer_box_height(&g, main_area.width);
+                    let (tr, _, slash_r, _) = layout_chunks(main_area, sh, input_h);
 
                     if rect_contains(tr, m.column, m.row) {
                         let inner_w = tr.width.saturating_sub(2);
@@ -2858,6 +2861,7 @@ pub fn run_blocking(
                                 ));
                                 continue;
                             }
+                            g.push_history(&line);
                             drop(g);
                             let _ = cmd_tx.try_send(TuiCmd::Submit(line));
                         }
@@ -2881,7 +2885,8 @@ pub fn run_blocking(
                                         &g.input_buffer,
                                         g.cursor_char_idx,
                                     );
-                                    let (tr, _, _, _) = layout_chunks(main_area, sh);
+                                    let input_h = composer_box_height(&g, main_area.width);
+                                    let (tr, _, _, _) = layout_chunks(main_area, sh, input_h);
                                     let total =
                                         transcript_lines(&g, tr.width.saturating_sub(2)).len();
                                     let th = tr.height.saturating_sub(2) as usize;
@@ -2915,9 +2920,17 @@ pub fn run_blocking(
                                     && slash_panel_visible(&g.input_buffer)
                                 {
                                     g.slash_menu_index = g.slash_menu_index.saturating_sub(1);
-                                } else {
-                                    g.transcript_follow_tail = false;
-                                    g.scroll_lines = g.scroll_lines.saturating_sub(1);
+                                } else if !g.input_history.is_empty() {
+                                    let next_idx = match g.history_nav_index {
+                                        None => {
+                                            g.history_draft = g.input_buffer.clone();
+                                            g.input_history.len() - 1
+                                        }
+                                        Some(idx) => idx.saturating_sub(1),
+                                    };
+                                    g.history_nav_index = Some(next_idx);
+                                    g.input_buffer = g.input_history[next_idx].clone();
+                                    g.cursor_char_idx = g.input_buffer.chars().count();
                                 }
                             }
                         }
@@ -2940,28 +2953,15 @@ pub fn run_blocking(
                                 {
                                     let n = slash_filtered.len();
                                     g.slash_menu_index = (g.slash_menu_index + 1) % n;
-                                } else {
-                                    let sz = terminal.size().ok();
-                                    if let Some(sz) = sz {
-                                        let area = Rect::new(0, 0, sz.width, sz.height);
-                                        let (main_area, _) = layout_with_sidebar(area);
-                                        let sh = composer_chrome_height(
-                                            &slash_entries,
-                                            &workspace_files,
-                                            &g.input_buffer,
-                                            g.cursor_char_idx,
-                                        );
-                                        let (tr, _, _, _) = layout_chunks(main_area, sh);
-                                        let lines =
-                                            transcript_lines(&g, tr.width.saturating_sub(2));
-                                        let total = lines.len();
-                                        let th = tr.height.saturating_sub(2) as usize;
-                                        let max_scroll = total.saturating_sub(th);
-                                        g.scroll_lines = (g.scroll_lines + 1).min(max_scroll);
-                                        if g.scroll_lines >= max_scroll {
-                                            g.transcript_follow_tail = true;
-                                        }
+                                } else if let Some(idx) = g.history_nav_index {
+                                    if idx + 1 < g.input_history.len() {
+                                        g.history_nav_index = Some(idx + 1);
+                                        g.input_buffer = g.input_history[idx + 1].clone();
+                                    } else {
+                                        g.history_nav_index = None;
+                                        g.input_buffer = std::mem::take(&mut g.history_draft);
                                     }
+                                    g.cursor_char_idx = g.input_buffer.chars().count();
                                 }
                             }
                         }

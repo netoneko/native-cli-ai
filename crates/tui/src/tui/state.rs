@@ -111,6 +111,12 @@ pub struct TuiSessionState {
     pub streaming_assistant: Option<String>,
     pub input_buffer: String,
     pub cursor_char_idx: usize,
+    /// Previously submitted messages, oldest first, for ↑/↓ recall.
+    pub input_history: Vec<String>,
+    /// Position in `input_history` while recalling (`None` = live draft, not navigating).
+    pub history_nav_index: Option<usize>,
+    /// `input_buffer` as it was before history navigation started, restored on ↓ past the newest entry.
+    pub history_draft: String,
     /// Scroll offset in *lines* (flattened transcript).
     pub scroll_lines: usize,
     /// When true, transcript stays pinned to the bottom as new output arrives.
@@ -209,6 +215,9 @@ impl TuiSessionState {
             streaming_assistant: None,
             input_buffer: String::new(),
             cursor_char_idx: 0,
+            input_history: Vec::new(),
+            history_nav_index: None,
+            history_draft: String::new(),
             scroll_lines: 0,
             transcript_follow_tail: true,
             session_id,
@@ -246,6 +255,16 @@ impl TuiSessionState {
             stream_chars_since_dirty: 0,
             last_stream_transcript_dirty: None,
         }
+    }
+
+    /// Record a submitted line for ↑/↓ recall and leave history navigation.
+    pub fn push_history(&mut self, line: &str) {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && self.input_history.last().map(String::as_str) != Some(trimmed) {
+            self.input_history.push(trimmed.to_string());
+        }
+        self.history_nav_index = None;
+        self.history_draft.clear();
     }
 
     /// Replace the overlay after validating the FSM transition table.
