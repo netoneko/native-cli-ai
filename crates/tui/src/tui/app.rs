@@ -2930,6 +2930,34 @@ pub fn run_blocking(
                                 continue;
                             }
                             g.push_history(&line);
+                            // Echo immediately: `run_with_tui`'s command loop
+                            // processes one Submit at a time, so a message sent
+                            // while the current turn's tool calls are still
+                            // running just sits in `cmd_tx` — the real
+                            // `MessageReceived` event (and with it, the only
+                            // other thing that pushes a "YOU" block) doesn't
+                            // fire until that turn finishes. Without this, the
+                            // message visibly vanishes until then. Slash
+                            // commands are excluded: many are intercepted
+                            // before ever producing a `MessageReceived` event,
+                            // which would leave a stale, never-matched entry at
+                            // the front of `pending_own_submits` and desync the
+                            // dedup for every message queued after it.
+                            //
+                            // Match on `line.trim()`, not the raw buffer: the
+                            // server trims too (`repl.rs`'s `TuiCmd::Submit`
+                            // handler, before it ever reaches `MessageReceived`),
+                            // so any leading/trailing whitespace in the typed
+                            // (or pasted) text — invisible on screen either way —
+                            // made the two sides compare unequal, permanently
+                            // desyncing the queue on the very first mismatch and
+                            // producing a double render for every message after.
+                            let trimmed = line.trim();
+                            if !trimmed.starts_with('/') {
+                                g.blocks.push(DisplayBlock::User(trimmed.to_string()));
+                                g.pending_own_submits += 1;
+                                g.mark_transcript_dirty();
+                            }
                             drop(g);
                             let _ = cmd_tx.try_send(TuiCmd::Submit(line));
                         }

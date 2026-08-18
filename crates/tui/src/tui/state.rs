@@ -113,6 +113,17 @@ pub struct TuiSessionState {
     pub cursor_char_idx: usize,
     /// Previously submitted messages, oldest first, for ↑/↓ recall.
     pub input_history: Vec<String>,
+    /// Count of our own submits, echoed into `blocks` immediately on Enter
+    /// (so a message queued behind a busy turn doesn't vanish from the
+    /// transcript until that turn finishes) but not yet confirmed by the
+    /// real `MessageReceived{role: "user"}` event. Order-based, not
+    /// content-matched: the server trims/expands the line before that event
+    /// fires (`repl.rs`'s `TuiCmd::Submit` handler), so comparing text was
+    /// one mismatch away from permanently desyncing every message after it
+    /// (each `Submit` maps to exactly one eventual event, in order, for this
+    /// single interactive client — trusting that order is simpler and can't
+    /// get stuck the way a content comparison could).
+    pub pending_own_submits: usize,
     /// Position in `input_history` while recalling (`None` = live draft, not navigating).
     pub history_nav_index: Option<usize>,
     /// `input_buffer` as it was before history navigation started, restored on ↓ past the newest entry.
@@ -216,6 +227,7 @@ impl TuiSessionState {
             input_buffer: String::new(),
             cursor_char_idx: 0,
             input_history: Vec::new(),
+            pending_own_submits: 0,
             history_nav_index: None,
             history_draft: String::new(),
             scroll_lines: 0,
@@ -1249,7 +1261,11 @@ impl TuiSessionState {
                 self.flush_streaming_dirty();
                 if role == "user" {
                     self.streaming_assistant = None;
-                    self.blocks.push(DisplayBlock::User(content.clone()));
+                    if self.pending_own_submits > 0 {
+                        self.pending_own_submits -= 1;
+                    } else {
+                        self.blocks.push(DisplayBlock::User(content.clone()));
+                    }
                     self.set_busy_state(BusyState::Thinking);
                 } else if role == "assistant" {
                     self.streaming_assistant = None;
