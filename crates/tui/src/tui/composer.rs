@@ -192,6 +192,42 @@ pub fn delete_completed_at_mention(
     Some((remove_char_range(buffer, start_char, end_char), start_char))
 }
 
+/// Ctrl+W (readline convention): delete back through the word behind the
+/// cursor, skipping any trailing whitespace first. Returns the new buffer
+/// and cursor position; `None` if the cursor is already at column 0.
+pub fn delete_word_backward(buffer: &str, cursor_char_idx: usize) -> Option<(String, usize)> {
+    if cursor_char_idx == 0 {
+        return None;
+    }
+    let chars: Vec<char> = buffer.chars().collect();
+    let mut start = cursor_char_idx.min(chars.len());
+    while start > 0 && chars[start - 1].is_whitespace() {
+        start -= 1;
+    }
+    while start > 0 && !chars[start - 1].is_whitespace() {
+        start -= 1;
+    }
+    Some((remove_char_range(buffer, start, cursor_char_idx), start))
+}
+
+/// Ctrl+U (readline convention): delete from the cursor back to the start of
+/// the current line — stops at the nearest preceding `\n` rather than the
+/// start of the whole (possibly multi-line) buffer. `None` if the cursor is
+/// already at the start of its line.
+pub fn delete_to_line_start(buffer: &str, cursor_char_idx: usize) -> Option<(String, usize)> {
+    let chars: Vec<char> = buffer.chars().collect();
+    let cursor_char_idx = cursor_char_idx.min(chars.len());
+    let line_start = chars[..cursor_char_idx]
+        .iter()
+        .rposition(|&c| c == '\n')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    if line_start == cursor_char_idx {
+        return None;
+    }
+    Some((remove_char_range(buffer, line_start, cursor_char_idx), line_start))
+}
+
 fn push_styled_run(
     spans: &mut Vec<Span<'static>>,
     text: &mut String,
@@ -209,40 +245,53 @@ fn push_styled_run(
     text.push(ch);
 }
 
-pub fn composer_line(buffer: &str, cursor_char_idx: usize) -> Line<'static> {
-    let prompt = Span::styled("❯ ", Style::default().fg(theme::USER).bold());
+/// Render the composer buffer as one `Line` per `\n`-separated row (Shift+Enter
+/// / Ctrl+J insert a literal `\n` into the buffer for a multi-line prompt).
+/// Only the first row gets the "❯ " prompt glyph; continuation rows are
+/// indented to align under it.
+pub fn composer_line(buffer: &str, cursor_char_idx: usize) -> Vec<Line<'static>> {
     let chars: Vec<char> = buffer.chars().collect();
     let mention_ranges = at_mention_char_ranges(buffer);
     let cursor_char_idx = cursor_char_idx.min(chars.len());
-    let mut spans = vec![prompt];
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let mut spans = vec![Span::styled("❯ ", Style::default().fg(theme::USER).bold())];
     let mut run = String::new();
     let mut run_style: Option<Style> = None;
+
+    let cursor_style_for = |idx: usize| {
+        let in_mention = idx < chars.len()
+            && mention_ranges
+                .iter()
+                .any(|(start, end)| *start <= idx && idx < *end);
+        if in_mention {
+            Style::default()
+                .bg(theme::USER)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .bg(theme::MUTED)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD)
+        }
+    };
 
     for idx in 0..=chars.len() {
         if idx == cursor_char_idx {
             let cursor_char = chars.get(idx).copied().unwrap_or(' ');
-            let in_mention = idx < chars.len()
-                && mention_ranges
-                    .iter()
-                    .any(|(start, end)| *start <= idx && idx < *end);
-            let cursor_style = if in_mention {
-                Style::default()
-                    .bg(theme::USER)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-                    .bg(theme::MUTED)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD)
-            };
-            push_styled_run(
-                &mut spans,
-                &mut run,
-                &mut run_style,
-                cursor_style,
-                cursor_char,
-            );
+            // Render the cursor as a highlighted block even when it sits on
+            // the newline itself, then let the newline handling below (or
+            // end-of-buffer) close the line out.
+            let shown = if cursor_char == '\n' { ' ' } else { cursor_char };
+            push_styled_run(&mut spans, &mut run, &mut run_style, cursor_style_for(idx), shown);
+            if cursor_char == '\n' {
+                if !run.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut run), run_style.take().unwrap_or_default()));
+                }
+                out.push(Line::from(std::mem::take(&mut spans)));
+                spans = vec![Span::raw("  ")];
+                continue;
+            }
             if idx == chars.len() {
                 break;
             }
@@ -252,6 +301,14 @@ pub fn composer_line(buffer: &str, cursor_char_idx: usize) -> Line<'static> {
         let Some(ch) = chars.get(idx).copied() else {
             break;
         };
+        if ch == '\n' {
+            if !run.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut run), run_style.take().unwrap_or_default()));
+            }
+            out.push(Line::from(std::mem::take(&mut spans)));
+            spans = vec![Span::raw("  ")];
+            continue;
+        }
         let in_mention = mention_ranges
             .iter()
             .any(|(start, end)| *start <= idx && idx < *end);
@@ -269,8 +326,8 @@ pub fn composer_line(buffer: &str, cursor_char_idx: usize) -> Line<'static> {
     if !run.is_empty() {
         spans.push(Span::styled(run, run_style.unwrap_or_default()));
     }
-
-    Line::from(spans)
+    out.push(Line::from(spans));
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +571,37 @@ pub fn palette_selectable_indices(rows: &[&PaletteRow]) -> Vec<usize> {
 mod tests {
     use super::*;
     use crate::slash_commands::resolve_command;
+
+    #[test]
+    fn delete_word_backward_skips_trailing_whitespace_then_the_word() {
+        let (buf, cidx) = delete_word_backward("hello world  ", 13).unwrap();
+        assert_eq!(buf, "hello ");
+        assert_eq!(cidx, 6);
+    }
+
+    #[test]
+    fn delete_word_backward_from_word_middle_deletes_only_that_word() {
+        // Cursor right after "bar" (index 7): only "bar" is consumed, not the
+        // space that follows it before "baz" — matches readline's Ctrl+W.
+        let (buf, cidx) = delete_word_backward("foo bar baz", 7).unwrap();
+        assert_eq!(buf, "foo  baz");
+        assert_eq!(cidx, 4);
+    }
+
+    #[test]
+    fn delete_word_backward_at_column_zero_is_none() {
+        assert_eq!(delete_word_backward("hello", 0), None);
+    }
+
+    #[test]
+    fn composer_line_splits_on_embedded_newlines() {
+        let lines = composer_line("first\nsecond", 12);
+        assert_eq!(lines.len(), 2);
+        let first_plain: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        let second_plain: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(first_plain.contains("first"));
+        assert!(second_plain.contains("second"));
+    }
 
     #[test]
     fn visible_palette_entries_map_to_registered_commands() {

@@ -5,9 +5,9 @@ use crate::tui::debug_log;
 use crate::tui::composer::{
     PaletteRow, SLASH_PANEL_MAX_ROWS, apply_at_completion, apply_selected_at_completion,
     at_completion_active, at_completion_matches, branch_picker_enter_command, composer_box_height,
-    composer_chrome_height, composer_line, delete_completed_at_mention, filter_palette_rows,
-    filter_slash_entries, filtered_branch_indices, load_slash_entries, palette_command_for_label,
-    palette_selectable_indices, slash_panel_visible,
+    composer_chrome_height, composer_line, delete_completed_at_mention, delete_word_backward,
+    filter_palette_rows, filter_slash_entries, filtered_branch_indices, load_slash_entries,
+    palette_command_for_label, palette_selectable_indices, slash_panel_visible,
 };
 use crate::tui::connect_modal::{
     ConnectRow, build_connect_rows, clamp_selection, provider_at_selection,
@@ -805,8 +805,6 @@ pub fn run_blocking(
                     }
                 }
 
-                let input_line = composer_line(&g.input_buffer, g.cursor_char_idx);
-
                 let hint = if g.active_approval.is_some() {
                     Line::from(Span::styled(
                         "Approval: y/n · Ctrl+Y approve · Ctrl+N deny · Ctrl+U always allow · /approve · /deny · other /commands still work",
@@ -852,7 +850,7 @@ pub fn run_blocking(
                 } else {
                     Span::styled(" message ", Style::default().fg(theme::MUTED))
                 };
-                let mut input_lines = vec![input_line];
+                let mut input_lines = composer_line(&g.input_buffer, g.cursor_char_idx);
                 if !g.staged_image_attachments.is_empty() {
                     input_lines.push(Line::from(Span::styled(
                         format!(
@@ -1922,9 +1920,15 @@ pub fn run_blocking(
                     if g.command_palette_open() {
                         match (key.code, key.modifiers) {
                             (KeyCode::Esc, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                                // `close_command_palette()` already drops the
+                                // `UiOverlay::CommandPalette{query, palette_index}`
+                                // variant entirely (replaced by `UiOverlay::None`),
+                                // and `open_command_palette()` resets both fields
+                                // fresh on next open — nothing left to clear here.
+                                // Unwrapping the accessors *after* closing crashed
+                                // every time (both always return `None` once the
+                                // overlay is gone).
                                 g.close_command_palette();
-                                g.command_palette_query_mut().unwrap().clear();
-                                *g.palette_index_mut().unwrap() = 0;
                             }
                             (KeyCode::Up, _) => {
                                 if g.palette_index() > 0 {
@@ -1952,8 +1956,6 @@ pub fn run_blocking(
                                     None
                                 };
                                 g.close_command_palette();
-                                g.command_palette_query_mut().unwrap().clear();
-                                *g.palette_index_mut().unwrap() = 0;
                                 if let Some(command) = command {
                                     drop(g);
                                     let _ = cmd_tx.try_send(TuiCmd::Submit(command));
@@ -2793,6 +2795,27 @@ pub fn run_blocking(
                                 continue;
                             }
                         }
+                        // Shift+Enter only arrives as a distinct event on terminals that
+                        // negotiate the Kitty/CSI-u keyboard protocol (Kitty, WezTerm,
+                        // Ghostty, recent iTerm2); on a plain terminal it's indistinguishable
+                        // from Enter at the byte level, so Ctrl+J (a real, universally
+                        // portable byte) is the fallback that always works.
+                        (KeyCode::Enter, KeyModifiers::SHIFT)
+                        | (KeyCode::Char('j'), KeyModifiers::CONTROL) => {
+                            let idx = g.cursor_char_idx;
+                            let mut cs: Vec<char> = g.input_buffer.chars().collect();
+                            cs.insert(idx, '\n');
+                            g.input_buffer = cs.into_iter().collect();
+                            g.cursor_char_idx += 1;
+                        }
+                        (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
+                            if let Some((buf, cidx)) =
+                                delete_word_backward(&g.input_buffer, g.cursor_char_idx)
+                            {
+                                g.input_buffer = buf;
+                                g.cursor_char_idx = cidx;
+                            }
+                        }
                         (KeyCode::Enter, _) => {
                             if !workspace_files_indexing
                                 && let Some((buf, cidx)) = apply_selected_at_completion(
@@ -3203,8 +3226,8 @@ mod approval_parse_tests {
 
     #[test]
     fn composer_line_styles_completed_mentions() {
-        let line = composer_line("see @README.md ", 15);
-        let mention_span = line
+        let lines = composer_line("see @README.md ", 15);
+        let mention_span = lines[0]
             .spans
             .iter()
             .find(|span| span.content.contains("@README.md"))
