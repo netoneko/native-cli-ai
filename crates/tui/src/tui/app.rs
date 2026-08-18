@@ -1,6 +1,7 @@
 //! Full-screen session TUI: transcript, streaming assistant, composer.
 
 use crate::file_mentions;
+use crate::tui::debug_log;
 use crate::tui::composer::{
     PaletteRow, SLASH_PANEL_MAX_ROWS, apply_at_completion, apply_selected_at_completion,
     at_completion_active, at_completion_matches, branch_picker_enter_command, composer_box_height,
@@ -251,6 +252,7 @@ pub fn run_blocking(
     let mut last_rendered_version: u64 = 0;
     let mut last_rendered_size: (u16, u16) = (0, 0);
     let mut last_busy_tick: std::time::Instant = std::time::Instant::now();
+    let mut input_poll_iterations: u64 = 0;
     loop {
         if workspace_files_indexing && let Ok(files) = workspace_files_rx.try_recv() {
             workspace_files = files;
@@ -1722,8 +1724,16 @@ pub fn run_blocking(
         // Adaptive poll: quick ticks (~66ms) while the agent is busy or
         // streaming so the spinner stays lively; otherwise 250ms to keep
         // idle CPU <1% per the research doc.
+        let lock_wait_start = std::time::Instant::now();
         let poll_ms = {
             let g = state.lock().map_err(|e| anyhow::anyhow!("lock: {e}"))?;
+            let waited = lock_wait_start.elapsed();
+            if waited.as_millis() > 20 {
+                debug_log::log(
+                    "poll_ms_lock",
+                    &format!("waited {waited:?} to acquire state lock"),
+                );
+            }
             if matches!(
                 g.current_busy_state,
                 BusyState::Thinking
@@ -1736,9 +1746,39 @@ pub fn run_blocking(
                 250u64
             }
         };
-        if poll(Duration::from_millis(poll_ms))? {
+        input_poll_iterations += 1;
+        if input_poll_iterations.is_multiple_of(40) {
+            debug_log::log(
+                "heartbeat",
+                &format!("iteration={input_poll_iterations} poll_ms={poll_ms}"),
+            );
+        }
+        let poll_start = std::time::Instant::now();
+        let poll_ready = poll(Duration::from_millis(poll_ms))?;
+        let poll_elapsed = poll_start.elapsed();
+        if poll_elapsed.as_millis() > (poll_ms as u128).saturating_mul(3) {
+            debug_log::log(
+                "poll_slow",
+                &format!(
+                    "poll(budget={poll_ms}ms) took {poll_elapsed:?} before returning {poll_ready}"
+                ),
+            );
+        }
+        if poll_ready {
+            let read_start = std::time::Instant::now();
             let ev = read()?;
+            let read_elapsed = read_start.elapsed();
+            let lock_wait_start = std::time::Instant::now();
             let mut g = state.lock().map_err(|e| anyhow::anyhow!("lock: {e}"))?;
+            let lock_wait = lock_wait_start.elapsed();
+            if matches!(ev, Event::Key(_)) || lock_wait.as_millis() > 20 {
+                debug_log::log(
+                    "key_event",
+                    &format!(
+                        "event={ev:?} read_elapsed={read_elapsed:?} lock_wait={lock_wait:?}"
+                    ),
+                );
+            }
             // Any user input triggers a redraw on the next tick (typing, mouse,
             // resize, etc). This avoids having to sprinkle `mark_dirty()` through
             // every branch of the huge `match ev` below.

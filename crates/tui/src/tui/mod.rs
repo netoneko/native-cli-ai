@@ -5,6 +5,7 @@ pub mod bridge;
 pub mod busy_indicator;
 pub mod composer;
 pub mod connect_modal;
+pub mod debug_log;
 pub mod git;
 pub mod input;
 pub mod layout;

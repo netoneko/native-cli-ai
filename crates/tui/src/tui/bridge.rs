@@ -47,6 +47,9 @@ pub fn spawn_tui_bridge(
         let mut event_id: u64 = 0;
         while let Some(event) = rx.recv().await {
             event_id += 1;
+            if event_id.is_multiple_of(200) {
+                crate::tui::debug_log::log("bridge_heartbeat", &format!("event #{event_id}"));
+            }
             let envelope = EventEnvelope::new(event_id, event.clone());
 
             if let Some(ref fan) = ipc {
@@ -74,7 +77,17 @@ pub fn spawn_tui_bridge(
             let event = event.clone();
             let version_tx = version_tx.clone();
             let _ = tokio::task::spawn_blocking(move || {
+                let lock_wait_start = std::time::Instant::now();
                 if let Ok(mut g) = state.lock() {
+                    let lock_wait = lock_wait_start.elapsed();
+                    if lock_wait.as_millis() > 20 {
+                        crate::tui::debug_log::log(
+                            "bridge_lock",
+                            &format!(
+                                "event #{event_id} waited {lock_wait:?} to acquire state lock"
+                            ),
+                        );
+                    }
                     let before = g.state_version;
                     g.apply_event(&event);
                     if g.state_version != before
