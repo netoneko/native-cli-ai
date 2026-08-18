@@ -20,14 +20,28 @@ Set the permission mode via CLI flag, config file, or interactive command.
 # CLI flag
 nca --permission-mode accept-edits
 
-# Environment (via config)
-# In config.toml:
-# [permissions]
-# mode = "accept-edits"
-
 # Interactive slash command
 /permissions accept-edits
 ```
+
+To make a mode the default without passing a flag every time, set it in
+`config.toml`:
+
+```toml
+[permissions]
+mode = "bypass-permissions"
+```
+
+This file lives at:
+
+- **Global** (applies to every workspace): `$XDG_DATA_HOME/ncacli/config.toml`,
+  or `~/.local/share/ncacli/config.toml` if `XDG_DATA_HOME` is unset. Override
+  the whole product directory with `NCA_HOME` (`$NCA_HOME/config.toml`).
+- **Per-workspace override**: `<workspace>/.nca/config.local.toml` — takes
+  precedence over the global file for that workspace only.
+
+A CLI `--permission-mode` flag or the `/permissions` slash command still
+overrides whatever `mode` is set in either file for that invocation/session.
 
 ## Tool Categories
 

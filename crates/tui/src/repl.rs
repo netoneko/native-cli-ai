@@ -244,7 +244,25 @@ impl Repl {
         loop {
             // Update prompt with current agent profile
             self.prompt.set_agent(&self.current_agent_label);
-            let sig = editor.read_line(&self.prompt);
+
+            // `read_line` blocks synchronously on raw terminal I/O for as long as
+            // the user takes to type — potentially forever. Called directly here
+            // (this fn is `async`), it would monopolize whatever tokio worker
+            // thread is running this task for that whole time, starving every
+            // other task scheduled on this runtime (the event-fanout task, IPC
+            // consumer, subagent consumer, …) — the classic "blocking call on an
+            // async runtime without spawn_blocking" hazard. Move it onto tokio's
+            // blocking pool instead, which is sized for exactly this and doesn't
+            // steal from the worker pool the rest of nca depends on.
+            let prompt_snapshot = self.prompt.clone();
+            let (returned_editor, sig) = tokio::task::spawn_blocking(move || {
+                let sig = editor.read_line(&prompt_snapshot);
+                (editor, sig)
+            })
+            .await
+            .expect("read_line blocking task panicked");
+            editor = returned_editor;
+
             match sig {
                 Ok(Signal::Success(input)) => {
                     if input.is_empty() {

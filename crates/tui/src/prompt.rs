@@ -1,5 +1,6 @@
 use reedline::Prompt;
 
+#[derive(Clone)]
 pub struct NcaPrompt {
     pub safe_mode: bool,
     pub run_mode: bool,
