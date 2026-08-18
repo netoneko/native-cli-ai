@@ -5,9 +5,9 @@ use crate::tui::debug_log;
 use crate::tui::composer::{
     PaletteRow, SLASH_PANEL_MAX_ROWS, apply_at_completion, apply_selected_at_completion,
     at_completion_active, at_completion_matches, branch_picker_enter_command, composer_box_height,
-    composer_chrome_height, composer_line, delete_completed_at_mention, delete_word_backward,
-    filter_palette_rows, filter_slash_entries, filtered_branch_indices, load_slash_entries,
-    palette_command_for_label, palette_selectable_indices, slash_panel_visible,
+    composer_chrome_height, composer_line, delete_completed_at_mention, delete_to_line_start,
+    delete_word_backward, filter_palette_rows, filter_slash_entries, filtered_branch_indices,
+    load_slash_entries, palette_command_for_label, palette_selectable_indices, slash_panel_visible,
 };
 use crate::tui::connect_modal::{
     ConnectRow, build_connect_rows, clamp_selection, provider_at_selection,
@@ -2793,6 +2793,11 @@ pub fn run_blocking(
                                     });
                                 }
                                 continue;
+                            } else if let Some((buf, cidx)) =
+                                delete_to_line_start(&g.input_buffer, g.cursor_char_idx)
+                            {
+                                g.input_buffer = buf;
+                                g.cursor_char_idx = cidx;
                             }
                         }
                         // Shift+Enter only arrives as a distinct event on terminals that
@@ -3042,6 +3047,27 @@ pub fn run_blocking(
                                     g.input_buffer = cs.into_iter().collect();
                                     g.cursor_char_idx -= 1;
                                 }
+                                if slash_panel_visible(&g.input_buffer) {
+                                    let f = filter_slash_entries(&slash_entries, &g.input_buffer);
+                                    if !f.is_empty() {
+                                        g.slash_menu_index =
+                                            g.slash_menu_index.min(f.len().saturating_sub(1));
+                                    } else {
+                                        g.slash_menu_index = 0;
+                                    }
+                                }
+                            }
+                        }
+                        (KeyCode::Delete, _) => {
+                            // Forward-delete (macOS "Delete" key, distinct from
+                            // Backspace — sends its own sequence, parsed by
+                            // crossterm as KeyCode::Delete, not a Backspace
+                            // variant, so it needs its own arm).
+                            let idx = g.cursor_char_idx;
+                            let mut cs: Vec<char> = g.input_buffer.chars().collect();
+                            if idx < cs.len() {
+                                cs.remove(idx);
+                                g.input_buffer = cs.into_iter().collect();
                                 if slash_panel_visible(&g.input_buffer) {
                                     let f = filter_slash_entries(&slash_entries, &g.input_buffer);
                                     if !f.is_empty() {

@@ -594,6 +594,28 @@ mod tests {
     }
 
     #[test]
+    fn delete_to_line_start_kills_whole_single_line_buffer() {
+        let (buf, cidx) = delete_to_line_start("hello world", 11).unwrap();
+        assert_eq!(buf, "");
+        assert_eq!(cidx, 0);
+    }
+
+    #[test]
+    fn delete_to_line_start_stops_at_previous_newline() {
+        // "first\nsecond", cursor at end (12): only "second" is killed, the
+        // first line and its trailing newline survive.
+        let (buf, cidx) = delete_to_line_start("first\nsecond", 12).unwrap();
+        assert_eq!(buf, "first\n");
+        assert_eq!(cidx, 6);
+    }
+
+    #[test]
+    fn delete_to_line_start_at_line_start_is_none() {
+        assert_eq!(delete_to_line_start("first\nsecond", 6), None);
+        assert_eq!(delete_to_line_start("hello", 0), None);
+    }
+
+    #[test]
     fn composer_line_splits_on_embedded_newlines() {
         let lines = composer_line("first\nsecond", 12);
         assert_eq!(lines.len(), 2);
