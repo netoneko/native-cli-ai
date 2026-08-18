@@ -251,11 +251,6 @@ mod theme {
         g: 145,
         b: 191,
     };
-    pub const ASSISTANT_BG: Color = Color::TrueColor {
-        r: 137,
-        g: 87,
-        b: 220,
-    };
     pub const TOOL_BG: Color = Color::TrueColor {
         r: 58,
         g: 170,
@@ -543,14 +538,18 @@ fn render_event(event: &AgentEvent, stats: &StreamStats) {
             );
         }
         AgentEvent::MessageReceived { role, content } => {
+            if role == "assistant" {
+                // Assistant text was already printed live, delta by delta, via
+                // TokensStreamed as it arrived. Reprinting `content` here would
+                // duplicate the entire response — this event just closes out
+                // the streamed line.
+                println!();
+                return;
+            }
             println!();
             let header = match role.as_str() {
                 "user" => format!(" {} ", "YOU".to_uppercase())
                     .on_color(theme::USER_BG)
-                    .white()
-                    .bold(),
-                "assistant" => format!(" {} ", "nca")
-                    .on_color(theme::ASSISTANT_BG)
                     .white()
                     .bold(),
                 _ => format!(" {} ", role.to_uppercase())

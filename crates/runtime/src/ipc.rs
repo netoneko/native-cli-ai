@@ -49,23 +49,34 @@ impl IpcServer {
             let _ = tokio::fs::remove_file(&self.socket_path).await;
         }
 
-        let listener = bind_listener(&self.socket_path).await?;
+        // Akuma has no AF_UNIX stream sockets (only socketpair). Degrade to a
+        // disabled-IPC mode: the handle's channels still work in-process, only
+        // external attach/status clients lose connectivity.
+        let listener = match bind_listener(&self.socket_path).await {
+            Ok(l) => Some(l),
+            Err(err) => {
+                tracing::warn!("IPC disabled: socket bind failed: {err}");
+                None
+            }
+        };
         let (event_tx, _) = broadcast::channel::<String>(256);
         let accept_event_tx = event_tx.clone();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let socket_path = self.socket_path.clone();
 
-        tokio::spawn(async move {
-            loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    break;
-                };
-                let event_rx = accept_event_tx.subscribe();
-                let command_tx = command_tx.clone();
-                tokio::spawn(handle_connection(stream, event_rx, command_tx));
-            }
-            cleanup_endpoint(&socket_path).await;
-        });
+        if let Some(listener) = listener {
+            tokio::spawn(async move {
+                loop {
+                    let Ok((stream, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let event_rx = accept_event_tx.subscribe();
+                    let command_tx = command_tx.clone();
+                    tokio::spawn(handle_connection(stream, event_rx, command_tx));
+                }
+                cleanup_endpoint(&socket_path).await;
+            });
+        }
 
         Ok(IpcHandle {
             socket_path: self.socket_path.clone(),

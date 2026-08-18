@@ -624,6 +624,9 @@ async fn try_main() -> anyhow::Result<()> {
                         );
                         let _ = runtime.run_turn(prompt).await;
                         let mut repl = Repl::new(runtime, cli.safe, true);
+                        if !matches!(cli.stream, StreamMode::Off) {
+                            repl.suppress_turn_echo();
+                        }
                         repl.run().await?;
                     }
                 } else {
@@ -713,6 +716,9 @@ async fn try_main() -> anyhow::Result<()> {
                     if use_tui {
                         repl.run_with_tui().await?;
                     } else {
+                        if !matches!(cli.stream, StreamMode::Off) {
+                            repl.suppress_turn_echo();
+                        }
                         repl.run().await?;
                     }
                 } else {
@@ -781,6 +787,9 @@ async fn try_main() -> anyhow::Result<()> {
                         if use_tui {
                             repl.run_with_tui().await?;
                         } else {
+                            if !matches!(cli.stream, StreamMode::Off) {
+                                repl.suppress_turn_echo();
+                            }
                             repl.run().await?;
                         }
                     }
@@ -1118,7 +1127,9 @@ async fn resume_session(
             .run_turn(&prompt)
             .await
             .map_err(anyhow::Error::msg)?;
-        println!("{output}");
+        if matches!(stream, StreamMode::Off) {
+            println!("{output}");
+        }
         return Ok(());
     }
 
@@ -1139,6 +1150,9 @@ async fn resume_session(
     if use_tui {
         repl.run_with_tui().await?;
     } else {
+        if !matches!(stream, StreamMode::Off) {
+            repl.suppress_turn_echo();
+        }
         repl.run().await?;
     }
     Ok(())

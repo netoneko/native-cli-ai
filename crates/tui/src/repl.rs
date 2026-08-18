@@ -185,6 +185,12 @@ pub struct Repl {
     history_path: std::path::PathBuf,
     agent_profile: AgentProfile,
     current_agent_label: String,
+    /// Whether `run()` should print the turn's final text itself. Set to
+    /// false by the caller when a stream task is already rendering
+    /// `MessageReceived`/`TokensStreamed` events for the same output —
+    /// otherwise the response gets printed twice, racing the stream task's
+    /// own writes to the same stdout.
+    print_turn_output: bool,
 }
 
 impl Repl {
@@ -199,7 +205,15 @@ impl Repl {
             history_path,
             agent_profile,
             current_agent_label,
+            print_turn_output: true,
         }
+    }
+
+    /// Call when a stream task is already rendering assistant turns (any
+    /// `StreamMode` other than `Off`), so `run()`'s loop doesn't print the
+    /// final text a second time.
+    pub fn suppress_turn_echo(&mut self) {
+        self.print_turn_output = false;
     }
 
     /// Run the interactive REPL until the user exits.
@@ -270,7 +284,9 @@ impl Repl {
                     };
                     match self.runtime.run_turn(&expanded).await {
                         Ok(output) => {
-                            println!("{output}");
+                            if self.print_turn_output {
+                                println!("{output}");
+                            }
                         }
                         Err(err) => {
                             eprintln!("error: {err}");
