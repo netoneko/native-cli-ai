@@ -61,15 +61,30 @@ pub fn spawn_tui_bridge(
                 let _ = file.write_all(b"\n").await;
             }
 
-            if let Ok(mut g) = state.lock() {
-                let before = g.state_version;
-                g.apply_event(&event);
-                if g.state_version != before
-                    && let Some(tx) = &version_tx
-                {
-                    let _ = tx.send(g.state_version);
+            // `state.lock()` is a blocking `std::sync::Mutex` acquisition, made
+            // directly inside this async task. The render loop (`run_blocking`,
+            // on its own dedicated OS thread) holds the same lock across its
+            // whole draw+input-poll iteration, including the synchronous
+            // `terminal.draw()` call. Taking the lock here without
+            // `spawn_blocking` risks parking whichever tokio worker thread is
+            // running this task for however long that render-side critical
+            // section takes — once per event, on every event. Move it onto the
+            // blocking pool like every other blocking call in this codebase.
+            let state = state.clone();
+            let event = event.clone();
+            let version_tx = version_tx.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Ok(mut g) = state.lock() {
+                    let before = g.state_version;
+                    g.apply_event(&event);
+                    if g.state_version != before
+                        && let Some(tx) = &version_tx
+                    {
+                        let _ = tx.send(g.state_version);
+                    }
                 }
-            }
+            })
+            .await;
         }
     })
 }
