@@ -21,7 +21,14 @@ impl PtyManager {
             .arg(command)
             .current_dir(&self.workspace_root)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            // Without this, `tokio::time::timeout` below dropping `cmd.output()`
+            // on expiry does NOT send any signal to the child (tokio's documented
+            // default) -- it keeps running, fully orphaned. A later command in
+            // the same workspace can then contend with it (e.g. cargo's own
+            // target-dir build lock), and appear to hang for reasons that have
+            // nothing to do with the later command itself.
+            .kill_on_drop(true);
 
         let output = timeout(Duration::from_secs(timeout_secs), cmd.output())
             .await
