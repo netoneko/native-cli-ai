@@ -156,7 +156,10 @@ impl Supervisor {
         }
 
         let pty = Arc::new(PtyManager::new(&workspace_root));
-        tools.register(Box::new(crate::bash_tool::RuntimeBashTool::new(pty)));
+        tools.register(Box::new(crate::bash_tool::RuntimeBashTool::new(
+            pty,
+            config.tools.bash_timeout_secs,
+        )));
 
         let (spawn_tx, spawn_rx) = mpsc::channel::<SpawnRequest>(16);
         let recent_skills = RecentSkillHints::default();

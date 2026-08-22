@@ -29,7 +29,7 @@ impl ToolExecutor for BashTool {
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds (default: 120)"
                     }
                 },
                 "required": ["command"]
@@ -39,7 +39,7 @@ impl ToolExecutor for BashTool {
 
     async fn execute(&self, call: &ToolCall) -> ToolResult {
         let command = call.input["command"].as_str().unwrap_or("");
-        let timeout_secs = call.input["timeout_secs"].as_u64().unwrap_or(30);
+        let timeout_secs = call.input["timeout_secs"].as_u64().unwrap_or(120);
 
         let mut cmd = tokio::process::Command::new("sh");
         cmd.arg("-lc")

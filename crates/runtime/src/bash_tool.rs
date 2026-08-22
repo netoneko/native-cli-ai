@@ -8,11 +8,15 @@ use std::sync::Arc;
 /// without depending on the CLI crate.
 pub struct RuntimeBashTool {
     pty: Arc<PtyManager>,
+    /// Fallback when the model's own tool call omits `timeout_secs`. From
+    /// `ToolsConfig::bash_timeout_secs` (config file / `NCA_BASH_TIMEOUT_SECS`
+    /// / default 120) — see `docs/ISSUES.md`.
+    default_timeout_secs: u64,
 }
 
 impl RuntimeBashTool {
-    pub fn new(pty: Arc<PtyManager>) -> Self {
-        Self { pty }
+    pub fn new(pty: Arc<PtyManager>, default_timeout_secs: u64) -> Self {
+        Self { pty, default_timeout_secs }
     }
 }
 
@@ -31,7 +35,10 @@ impl ToolExecutor for RuntimeBashTool {
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Command timeout in seconds (default: 30)"
+                        "description": format!(
+                            "Command timeout in seconds (default: {})",
+                            self.default_timeout_secs
+                        )
                     }
                 },
                 "required": ["command"]
@@ -41,7 +48,9 @@ impl ToolExecutor for RuntimeBashTool {
 
     async fn execute(&self, call: &ToolCall) -> ToolResult {
         let command = call.input["command"].as_str().unwrap_or("");
-        let timeout_secs = call.input["timeout_secs"].as_u64().unwrap_or(30);
+        let timeout_secs = call.input["timeout_secs"]
+            .as_u64()
+            .unwrap_or(self.default_timeout_secs);
 
         match self.pty.exec(command, timeout_secs).await {
             Ok(out) => ToolResult {

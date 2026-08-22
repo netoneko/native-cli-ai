@@ -15,6 +15,8 @@ pub struct NcaConfig {
     pub memory: MemoryConfig,
     pub hooks: HookConfig,
     pub web: WebConfig,
+    #[serde(default)]
+    pub tools: ToolsConfig,
     /// CLI/TUI preferences (e.g. external editor).
     #[serde(default)]
     pub ui: UiConfig,
@@ -143,6 +145,9 @@ impl NcaConfig {
         if let Some(web) = partial.web {
             self.web.merge(web);
         }
+        if let Some(tools) = partial.tools {
+            self.tools.merge(tools);
+        }
         if let Some(ui) = partial.ui {
             self.ui.merge(ui);
         }
@@ -249,6 +254,12 @@ impl NcaConfig {
             && let Ok(timeout_secs) = timeout_secs.parse()
         {
             self.web.timeout_secs = timeout_secs;
+        }
+
+        if let Ok(timeout_secs) = env::var("NCA_BASH_TIMEOUT_SECS")
+            && let Ok(timeout_secs) = timeout_secs.parse()
+        {
+            self.tools.bash_timeout_secs = timeout_secs;
         }
 
         if let Ok(max_fetch_chars) = env::var("NCA_WEB_MAX_FETCH_CHARS")
@@ -1618,6 +1629,36 @@ impl WebConfig {
     }
 }
 
+/// Local tool execution settings (`execute_bash` and friends).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolsConfig {
+    /// Default `execute_bash` timeout when the model doesn't pass its own
+    /// `timeout_secs`. Overridable per-call by the model regardless of this
+    /// default — this only sets the fallback.
+    ///
+    /// 120s, not tokio::process::Command's implicit "however long the model
+    /// wants to wait": a command this hits is either genuinely slow (e.g. a
+    /// cold build) or stuck, and either way the caller needs a bound. See
+    /// `docs/ISSUES.md` for why a bound alone isn't enough — the timeout
+    /// must also `.kill_on_drop(true)` the child, or a bound that fires does
+    /// nothing but abandon a still-running process.
+    pub bash_timeout_secs: u64,
+}
+
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self { bash_timeout_secs: 120 }
+    }
+}
+
+impl ToolsConfig {
+    fn merge(&mut self, partial: PartialToolsConfig) {
+        if let Some(bash_timeout_secs) = partial.bash_timeout_secs {
+            self.bash_timeout_secs = bash_timeout_secs;
+        }
+    }
+}
+
 impl Default for HarnessConfig {
     fn default() -> Self {
         Self {
@@ -1774,6 +1815,7 @@ struct PartialNcaConfig {
     memory: Option<PartialMemoryConfig>,
     hooks: Option<PartialHookConfig>,
     web: Option<PartialWebConfig>,
+    tools: Option<PartialToolsConfig>,
     ui: Option<PartialUiConfig>,
 }
 
@@ -1924,6 +1966,11 @@ struct PartialWebConfig {
     max_fetch_chars: Option<usize>,
     default_search_limit: Option<usize>,
     user_agent: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct PartialToolsConfig {
+    bash_timeout_secs: Option<u64>,
 }
 
 fn default_true() -> bool {
