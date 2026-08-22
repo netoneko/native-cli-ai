@@ -16,6 +16,11 @@ pub fn anthropic_request_body(
     temperature: f32,
     workspace_root: &Path,
 ) -> Result<Value, ProviderError> {
+    // serde_json widens f32 by bit pattern (not by re-parsing the decimal), so
+    // 0.7f32 serializes as 0.699999988079071 — some endpoints (e.g. z.ai)
+    // reject anything past 2 decimal places. Round through f64 arithmetic so
+    // the JSON literal matches what the user actually typed.
+    let temperature = ((temperature as f64) * 100.0).round() / 100.0;
     let (system, anthropic_messages) = to_anthropic_messages(messages, workspace_root)?;
     let tools = if tools.is_empty() {
         None

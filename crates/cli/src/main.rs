@@ -645,14 +645,8 @@ async fn try_main() -> anyhow::Result<()> {
                     .await?;
                 }
             } else {
-                // First-run onboarding: show connect modal before building runtime
-                let onboarding_tui = !cli.no_tui
-                    && stdout().is_terminal()
-                    && stdin().is_terminal()
-                    && matches!(cli.stream, StreamMode::Human);
-                if config.needs_onboarding() && onboarding_tui {
-                    config = nca_tui::tui::onboarding::run_onboarding(config).await?;
-                }
+                // First-run onboarding is disabled in this fork — always skip
+                // straight to the normal REPL/runtime path.
 
                 if cli.resume {
                     if let Some(mode) = cli.permission_mode {
