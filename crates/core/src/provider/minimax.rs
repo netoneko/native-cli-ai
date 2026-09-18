@@ -53,7 +53,9 @@ impl MiniMaxProvider {
         let client = reqwest::Client::builder()
             .default_headers(headers)
             .connect_timeout(std::time::Duration::from_secs(30))
-            .read_timeout(std::time::Duration::from_secs(60))
+            .read_timeout(std::time::Duration::from_secs(
+                crate::provider::STREAM_READ_TIMEOUT_SECS,
+            ))
             .build()
             .map_err(|err| {
                 ProviderError::Configuration(format!("failed to build HTTP client: {err}"))

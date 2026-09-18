@@ -11,6 +11,28 @@ pub mod openrouter;
 pub mod test_support;
 pub mod validate;
 
+/// How long a streaming response may go **without a single byte** before the
+/// HTTP client gives up on the body.
+///
+/// This is `reqwest`'s inter-read timeout, not a total deadline: it restarts on
+/// every byte. It was 60 s, and 60 s is too short for a streaming chat
+/// completion — a model that thinks before it emits, or a slow link, produces
+/// exactly this shape (a few tokens, a long silence, the rest). Measured
+/// 2026-09-19 against a server that pauses mid-stream on purpose: a 40 s gap is
+/// delivered intact, a 70 s gap is not.
+///
+/// What made it expensive to find is the error it produces. `reqwest` surfaces
+/// an expired read timeout as a **body error**, so the user sees
+/// `error decoding response body` — which reads as "the server sent something
+/// malformed" and sends you looking at TLS, chunked framing and the network
+/// stack. Nothing was wrong with any of them; the client simply stopped
+/// listening. (A deliberately unframed test server produces the *same* message,
+/// which is worth knowing before trusting it.)
+///
+/// 300 s still catches a genuinely dead connection — a peer that vanishes
+/// without a FIN — while leaving room for a model to think.
+pub const STREAM_READ_TIMEOUT_SECS: u64 = 300;
+
 use std::path::Path;
 
 use async_trait::async_trait;
