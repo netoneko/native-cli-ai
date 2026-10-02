@@ -239,6 +239,9 @@ impl AgentLoop {
                         assistant_text.push_str(&delta);
                         self.emit(AgentEvent::TokensStreamed { delta }).await;
                     }
+                    StreamChunk::ReasoningDelta(delta) => {
+                        self.emit(AgentEvent::ReasoningStreamed { delta }).await;
+                    }
                     StreamChunk::ToolUse(call) => {
                         self.emit(AgentEvent::ToolCallStarted {
                             call_id: call.id.clone(),

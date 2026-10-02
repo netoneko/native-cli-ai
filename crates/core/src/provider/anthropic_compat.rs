@@ -132,6 +132,15 @@ pub fn spawn_anthropic_stream(
                                     let _ = tx.send(StreamChunk::TextDelta(text.to_string())).await;
                                 }
                             }
+                            "thinking_delta" => {
+                                if let Some(text) = delta["thinking"].as_str()
+                                    && !text.is_empty()
+                                {
+                                    let _ = tx
+                                        .send(StreamChunk::ReasoningDelta(text.to_string()))
+                                        .await;
+                                }
+                            }
                             "input_json_delta" => {
                                 if let Some(partial) = delta["partial_json"].as_str() {
                                     tool_input.push_str(partial);

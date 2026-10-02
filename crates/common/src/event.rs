@@ -73,6 +73,11 @@ pub enum AgentEvent {
     TokensStreamed {
         delta: String,
     },
+    /// A piece of the model's reasoning, streamed before (or between) its answer.
+    /// Display only: it is not part of the assistant message.
+    ReasoningStreamed {
+        delta: String,
+    },
     ToolCallStarted {
         call_id: String,
         tool: String,

@@ -89,6 +89,34 @@ pub fn transcript_lines_and_hits(
                 }
                 push_transcript_line(&mut lines, &mut hits, Line::default(), None);
             }
+            DisplayBlock::Reasoning(content) => {
+                push_transcript_line(
+                    &mut lines,
+                    &mut hits,
+                    Line::from(vec![Span::styled(
+                        " thinking ",
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(theme::MUTED)
+                            .add_modifier(Modifier::BOLD),
+                    )]),
+                    None,
+                );
+                for text_line in wrap_text(content.trim_start(), w) {
+                    push_transcript_line(
+                        &mut lines,
+                        &mut hits,
+                        Line::from(Span::styled(
+                            text_line,
+                            Style::default()
+                                .fg(theme::MUTED)
+                                .add_modifier(Modifier::ITALIC),
+                        )),
+                        None,
+                    );
+                }
+                push_transcript_line(&mut lines, &mut hits, Line::default(), None);
+            }
             DisplayBlock::ToolRunning { name, input, .. } => {
                 let summary = tool_running_summary(name, input);
                 push_transcript_line(

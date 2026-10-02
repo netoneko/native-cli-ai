@@ -879,7 +879,23 @@ async fn run_one_shot(
                 Err(anyhow::Error::msg(error.to_string()))
             }
         };
-        stream_task.abort();
+        // Let the event task drain BEFORE aborting it. `run_turn` returns as soon as the
+        // agent has pushed its last event, but the task that prints events and writes
+        // the session event log is separate and runs behind it; aborting it here threw
+        // away whatever was still queued — the tail of a streamed answer, the final
+        // assistant message, `SessionEnded` — whenever the consumer lagged the producer
+        // (always, on a slow console: a one-shot `nca run` printed half a sentence and
+        // exited 0; seen on the amd64 bare-metal box 2026-10-02). Dropping the runtime
+        // releases its event-sender clones, which is what ends the task's receive loop;
+        // the timeout is only a backstop for a clone that lingers.
+        drop(runtime);
+        let mut stream_task = stream_task;
+        if tokio::time::timeout(std::time::Duration::from_secs(5), &mut stream_task)
+            .await
+            .is_err()
+        {
+            stream_task.abort();
+        }
         if let Some(st) = spawn_task {
             st.abort();
         }

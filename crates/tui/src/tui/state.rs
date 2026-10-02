@@ -33,6 +33,8 @@ impl TranscriptCache {
 pub enum DisplayBlock {
     User(String),
     Assistant(String),
+    /// The model's reasoning, streamed live; shown dimmed, never sent back.
+    Reasoning(String),
     ToolRunning {
         name: String,
         call_id: String,
@@ -1273,6 +1275,13 @@ impl TuiSessionState {
                     self.set_busy_state(BusyState::Idle);
                 }
             }
+            AgentEvent::ReasoningStreamed { delta } => {
+                match self.blocks.last_mut() {
+                    Some(DisplayBlock::Reasoning(text)) => text.push_str(delta),
+                    _ => self.blocks.push(DisplayBlock::Reasoning(delta.clone())),
+                }
+                self.set_busy_state(BusyState::Thinking);
+            }
             AgentEvent::TokensStreamed { delta } => {
                 self.streaming_assistant
                     .get_or_insert_with(String::new)
@@ -2037,6 +2046,36 @@ mod tests {
         st.apply_event(&AgentEvent::TodosUpdated { todos: vec![] });
         assert!(st.todos.is_empty());
         assert_eq!(st.todo_modal_lines()[0], "Session todos (0/0 done)");
+    }
+
+    /// Reasoning deltas fold into one dimmed block, stay out of the assistant's own
+    /// streaming text (which is what gets saved and sent back), and a later answer
+    /// still renders after it.
+    #[test]
+    fn reasoning_streams_into_its_own_block_not_the_answer() {
+        let mut st = TuiSessionState::new(
+            "s".into(),
+            "m".into(),
+            "@build".into(),
+            "default".into(),
+            PathBuf::from("/tmp"),
+        );
+        for piece in ["We need ", "to add ", "17*23."] {
+            st.apply_event(&AgentEvent::ReasoningStreamed {
+                delta: piece.into(),
+            });
+        }
+        assert_eq!(st.blocks.len(), 1);
+        assert!(
+            matches!(&st.blocks[0], DisplayBlock::Reasoning(t) if t == "We need to add 17*23.")
+        );
+        assert!(st.streaming_assistant.is_none(), "reasoning must not enter the answer");
+
+        st.apply_event(&AgentEvent::TokensStreamed {
+            delta: "391".into(),
+        });
+        assert_eq!(st.streaming_assistant.as_deref(), Some("391"));
+        assert_eq!(st.blocks.len(), 1);
     }
 
     #[test]

@@ -141,7 +141,7 @@ impl Provider for MiniMaxProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|err| ProviderError::RequestFailed(err.to_string()))?;
+            .map_err(|err| ProviderError::RequestFailed(crate::provider::error_chain(&err)))?;
 
         let status = response.status();
         if !status.is_success() {

@@ -246,6 +246,13 @@ mod theme {
 
     pub const CLEAR_LINE: &str = "\x1B[2K";
 
+    /// Dim grey for the model's reasoning, so it reads as aside, not answer.
+    pub const MUTED: Color = Color::TrueColor {
+        r: 120,
+        g: 120,
+        b: 140,
+    };
+
     pub const USER_BG: Color = Color::TrueColor {
         r: 0,
         g: 145,
@@ -301,6 +308,10 @@ fn render_event(event: &AgentEvent, stats: &StreamStats) {
                 model.color(theme::TEXT)
             );
             println!();
+        }
+        AgentEvent::ReasoningStreamed { delta } => {
+            // stderr, dim: the answer on stdout stays clean for pipes and scripts.
+            eprint!("{}", delta.color(theme::MUTED));
         }
         AgentEvent::TokensStreamed { delta } => {
             print!("{delta}");

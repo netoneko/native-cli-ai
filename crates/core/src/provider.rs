@@ -43,6 +43,10 @@ use nca_common::tool::{ToolCall, ToolDefinition};
 #[derive(Debug, Clone)]
 pub enum StreamChunk {
     TextDelta(String),
+    /// A piece of the model's reasoning ("thinking"): OpenAI-style
+    /// `reasoning_content`, Anthropic-style `thinking_delta`. Shown to the user but
+    /// never added to the assistant message or sent back to the model.
+    ReasoningDelta(String),
     ToolUse(ToolCall),
     Usage {
         input_tokens: u64,
@@ -90,4 +94,58 @@ pub enum ProviderError {
     ModelNotFound(String),
     #[error("{0}")]
     Other(String),
+}
+
+/// An error and every error beneath it, joined with `": "`.
+///
+/// `reqwest::Error`'s own `Display` stops at "error sending request for url (…)"
+/// and drops the cause (DNS, connect, TLS, a reset connection, a timeout) that says
+/// what actually went wrong, which is the only part worth reading.
+pub fn error_chain(err: &dyn std::error::Error) -> String {
+    let mut out = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !out.ends_with(&text) {
+            out.push_str(": ");
+            out.push_str(&text);
+        }
+        source = cause.source();
+    }
+    out
+}
+
+#[cfg(test)]
+mod error_chain_tests {
+    use super::error_chain;
+    use std::fmt;
+
+    #[derive(Debug)]
+    struct Outer(Inner);
+    #[derive(Debug)]
+    struct Inner;
+    impl fmt::Display for Outer {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "error sending request for url (https://x/)")
+        }
+    }
+    impl fmt::Display for Inner {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "connection reset by peer")
+        }
+    }
+    impl std::error::Error for Inner {}
+    impl std::error::Error for Outer {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn chain_includes_the_cause_reqwest_hides() {
+        assert_eq!(
+            error_chain(&Outer(Inner)),
+            "error sending request for url (https://x/): connection reset by peer"
+        );
+    }
 }

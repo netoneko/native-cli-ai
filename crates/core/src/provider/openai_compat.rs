@@ -124,6 +124,18 @@ pub fn spawn_openai_stream(
 
                 for choice in choices {
                     let delta = &choice["delta"];
+                    // Reasoning models stream their thinking first, under
+                    // `reasoning_content` (Kimi, DeepSeek) or `reasoning` (some
+                    // gateways). Without this a thinking turn is minutes of silence.
+                    if let Some(thinking) = delta["reasoning_content"]
+                        .as_str()
+                        .or_else(|| delta["reasoning"].as_str())
+                        && !thinking.is_empty()
+                    {
+                        let _ = tx
+                            .send(StreamChunk::ReasoningDelta(thinking.to_string()))
+                            .await;
+                    }
                     if let Some(text) = delta["content"].as_str()
                         && !text.is_empty()
                     {
