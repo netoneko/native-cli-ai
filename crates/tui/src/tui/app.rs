@@ -2992,6 +2992,39 @@ pub fn run_blocking(
                                 }
                             }
                         }
+                        // Keyboard transcript scroll: the mouse wheel is the only other
+                        // way, and a console without one (the amd64 TV) could not reach
+                        // scrolled-off output. One page less one line, so a line of
+                        // context carries across.
+                        (KeyCode::PageUp | KeyCode::PageDown, _) => {
+                            if let Ok(sz) = terminal.size() {
+                                let area = Rect::new(0, 0, sz.width, sz.height);
+                                let (main_area, _) = layout_with_sidebar(area);
+                                let sh = composer_chrome_height(
+                                    &slash_entries,
+                                    &workspace_files,
+                                    &g.input_buffer,
+                                    g.cursor_char_idx,
+                                );
+                                let input_h = composer_box_height(&g, main_area.width);
+                                let (tr, _, _, _) = layout_chunks(main_area, sh, input_h);
+                                let inner_w = tr.width.saturating_sub(2);
+                                let total = ensure_transcript_cache(&mut g, inner_w).lines.len();
+                                let th = tr.height.saturating_sub(2) as usize;
+                                let max_scroll = total.saturating_sub(th);
+                                let page = th.saturating_sub(1).max(1);
+                                if key.code == KeyCode::PageUp {
+                                    g.transcript_follow_tail = false;
+                                    g.scroll_lines = g.scroll_lines.min(max_scroll).saturating_sub(page);
+                                } else {
+                                    g.scroll_lines = (g.scroll_lines + page).min(max_scroll);
+                                    if g.scroll_lines >= max_scroll {
+                                        g.transcript_follow_tail = true;
+                                    }
+                                }
+                                g.mark_dirty();
+                            }
+                        }
                         (KeyCode::Left, _) => {
                             g.cursor_char_idx = g.cursor_char_idx.saturating_sub(1);
                         }
